@@ -1,28 +1,27 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
+import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
+import './globals.css'
+import { Web3Provider } from '@/components/Web3Provider'
 
-const inter = Inter({
-  subsets: ["latin"],
-  display: 'swap',
-  variable: '--font-inter',
-});
+const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: "NFT AI Remixer",
-  description: "NFT AI Remixer",
-};
+  title: 'NFT AI Remixer',
+  description: 'Create an entirely new NFT based on a trait of a certain NFT using ORA AI',
+}
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: {
+  children: React.ReactNode
+}) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} font-sans antialiased`}>
-        {children}
+      <body className={inter.className}>
+        <Web3Provider>
+          {children}
+        </Web3Provider>
       </body>
     </html>
-  );
+  )
 }

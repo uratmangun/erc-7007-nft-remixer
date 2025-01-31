@@ -3,6 +3,12 @@ pragma solidity ^0.8.13;
 import {IERC7007} from "../interfaces/IERC7007.sol";
 import {ERC721, IERC721, IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+interface IVerifier {
+    function verifyProof(
+        bytes calldata proof,
+        uint256[] calldata publicInputs
+    ) external view returns (bool);
+}
 
 /**
 *       DISCLAIMER: THIS SMART CONTRACT IS FOR DEMONSTRATION PURPOSES ONLY!
@@ -16,42 +22,33 @@ contract AIGCNFT is IERC7007, ERC721 {
 
     struct AIGCData {
        
-        bytes imageCID;
+        bytes image;
         address author;
         uint256 requestId;
        
     }
-
     uint256 public totalSupply;
 
-    //prompt => aigcData
-    mapping(bytes => AIGCData) public aigc;
+    IVerifier public verifier;
 
-    //tokenId => prompt
-    mapping(uint256 => bytes) public tokenIdToPrompt;
+ 
 
-    //author => tokenIds
-    mapping(address => uint256[]) public ownedTokens;
-
-    function getOwnedTokens(address owner) public view returns (uint256[] memory){
-        return ownedTokens[owner];
+    constructor(address verifier_) ERC721("On-chain AI Oracle", "OAO") {
+        verifier = IVerifier(verifier_);
     }
 
-    //prompt => tokenId
-    mapping(bytes => uint256) public promptToTokenId;
-
-    constructor() ERC721("On-chain AI Oracle", "OAO") {
-        // totalSupply = 1;
-    }
-
-    function mint(string calldata prompt, uint256 requestId) internal {
-        // require(promptToTokenId[bytes(prompt)] == 0, "prompt is already minted");
-        promptToTokenId[bytes(prompt)] = totalSupply;
-        tokenIdToPrompt[totalSupply] = bytes(prompt);
-        aigc[bytes(prompt)].author = msg.sender;
-        aigc[bytes(prompt)].requestId = requestId;
-        ownedTokens[msg.sender].push(totalSupply);
-        _safeMint(msg.sender, totalSupply);
+    function mint(address to,
+        bytes calldata prompt,
+        bytes calldata aigcData,
+        string calldata uri,
+        bytes calldata proof) public virtual returns (uint256 tokenId) {
+        // Decode AIGCData to verify the author
+        (bytes memory image, address author, uint256 requestId) = abi.decode(aigcData, (bytes, address, uint256));
+        require(author == msg.sender, "Only author can mint");
+        
+        tokenId = totalSupply;
+        _safeMint(msg.sender, tokenId);
+        addAigcData(tokenId, prompt, aigcData, proof);
         totalSupply++;
     }
 
@@ -70,19 +67,23 @@ contract AIGCNFT is IERC7007, ERC721 {
             super.supportsInterface(interfaceId);
     }
 
-    /**
+   /**
      * @dev Add AIGC data to token at `tokenId` given `prompt`, `aigcData` and `proof`.
      *
      * Optional:
      * - `proof` should not include `aigcData` to save gas.
      * - verify(`prompt`, `aigcData`, `proof`) should return true for zkML scenario.
      */
-    function addAigcData(
+     function addAigcData(
         uint256 tokenId,
         bytes calldata prompt,
         bytes calldata aigcData,
         bytes calldata proof
-    ) external {}
+    ) public virtual override {
+        require(ownerOf(tokenId) != address(0), "ERC7007: nonexistent token");
+        require(verify(prompt, aigcData, proof), "ERC7007: invalid proof");
+        emit AigcData(tokenId, prompt, aigcData, proof);
+    }
 
     /**
      * @dev Verify the `prompt`, `aigcData` and `proof`.
@@ -91,10 +92,34 @@ contract AIGCNFT is IERC7007, ERC721 {
         bytes calldata prompt,
         bytes calldata aigcData,
         bytes calldata proof
-    ) external view virtual returns (bool success) {
-        return true;
+    ) public view returns (bool success) {
+        // Hash the inputs (must match the circuit's public input)
+        uint256 publicHash = hashInputs(prompt, aigcData);
+
+        // Verify the proof
+        uint256[] memory publicInputs = new uint256[](1);
+        publicInputs[0] = publicHash;
+
+        return verifier.verifyProof(proof, publicInputs);
     }
 
+    function hashInputs(bytes calldata prompt, bytes calldata aigcData)
+        internal
+        pure
+        returns (uint256)
+    {
+        // Decode AIGCData
+        (bytes memory image, address author, uint256 requestId) = abi.decode(
+            aigcData,
+            (bytes, address, uint256)
+        );
+
+        // Hash the inputs (must match the circuit's logic)
+        return uint256(
+            keccak256(abi.encodePacked(prompt, image, author, requestId))
+        );
+    }
+ 
     function toString(uint256 value) internal pure returns (string memory) {
         // Inspired by OraclizeAPI's implementation - MIT license
         // https://github.com/oraclize/ethereum-api/blob/b42146b063c7d6ee1358846c198246239e9360e8/oraclizeAPI_0.4.25.sol
@@ -117,4 +142,3 @@ contract AIGCNFT is IERC7007, ERC721 {
         return string(buffer);
     }
 }
-

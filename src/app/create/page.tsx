@@ -2,23 +2,59 @@
 
 import { useState } from 'react';
 import { useAccount } from 'wagmi';
-import { useRouter } from 'next/navigation';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { useChainId } from 'wagmi';
+import { createPublicClient, http } from 'viem';
+import { mainnet, polygon, arbitrum, optimism, base } from 'viem/chains';
+import ky from 'ky';
 
 type TabType = 'search' | 'contract';
 
 export default function CreateNFT() {
-  const router = useRouter();
+ 
   const { isConnected } = useAccount();
-  const [activeTab, setActiveTab] = useState<TabType>('search');
+  const chainId = useChainId();
+
+  // Map of chain clients
+  const chainClients = {
+    '1': createPublicClient({
+      chain: mainnet,
+      transport: http()
+    }),
+    '137': createPublicClient({
+      chain: polygon,
+      transport: http()
+    }),
+    '42161': createPublicClient({
+      chain: arbitrum,
+      transport: http()
+    }),
+    '10': createPublicClient({
+      chain: optimism,
+      transport: http()
+    }),
+    '8453': createPublicClient({
+      chain: base,
+      transport: http()
+    })
+  };
+
+  // Get the appropriate client based on current chain
+  const client = chainClients[chainId.toString() as keyof typeof chainClients];
+
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     prompt: '',
     baseNftAddress: '',
-    baseNftId: '',
-    searchQuery: '',
+    chainId: '',
+    tokenId: ''
   });
+
+  const [nftMetadata, setNftMetadata] = useState<any>(null);
+  const [nftData, setNftData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,9 +62,18 @@ export default function CreateNFT() {
     console.log('Form submitted:', formData);
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const convertIpfsUrl = (url: string) => {
+    if (!url) return url;
+    if (url.startsWith('ipfs://')) {
+      const ipfsHash = url.replace('ipfs://', '');
+      return `https://alchemy.mypinata.cloud/ipfs/${ipfsHash}`;
+    }
+    return url;
   };
 
   if (!isConnected) {
@@ -46,148 +91,176 @@ export default function CreateNFT() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 flex flex-col items-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-purple-600 to-blue-600 py-12">
       <div className="absolute top-4 right-4">
         <ConnectButton />
       </div>
       
-      <div className="max-w-2xl w-full mt-20">
-        <h1 className="text-4xl font-bold text-white mb-8 text-center">Create New NFT</h1>
-        
-        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-8">
-          {/* Tabs */}
-          <div className="flex mb-6 bg-white/5 rounded-lg p-1">
-            <button
-              onClick={() => setActiveTab('search')}
-              className={`flex-1 py-2 px-4 rounded-md transition-all ${
-                activeTab === 'search'
-                  ? 'bg-white text-purple-600'
-                  : 'text-white hover:bg-white/10'
-              }`}
-            >
-              Search NFT
-            </button>
-            <button
-              onClick={() => setActiveTab('contract')}
-              className={`flex-1 py-2 px-4 rounded-md transition-all ${
-                activeTab === 'contract'
-                  ? 'bg-white text-purple-600'
-                  : 'text-white hover:bg-white/10'
-              }`}
-            >
-              Contract Address
-            </button>
-          </div>
-
+      <div className="max-w-md mx-auto mt-20">
+        <div className="bg-purple-500/30 backdrop-blur-xl rounded-3xl p-8 shadow-2xl">
+          <h1 className="text-3xl font-bold text-white mb-8 text-center">Create New NFT</h1>
+          
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Search or Contract Input based on active tab */}
-            {activeTab === 'search' ? (
+            <div className="space-y-4">
               <div>
-                <label htmlFor="searchQuery" className="block text-white font-medium mb-2">
-                  Search NFTs
+                <label htmlFor="chainId" className="block text-white font-medium mb-2">
+                  Chain
+                </label>
+                <select
+                  id="chainId"
+                  name="chainId"
+                  value={formData.chainId}
+                  onChange={handleChange}
+                  className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                >
+                  <option value="" className="text-black">Select a chain</option>
+                  <option value="1" className="text-black">Ethereum</option>
+                  <option value="137" className="text-black">Polygon</option>
+                  <option value="42161" className="text-black">Arbitrum</option>
+                  <option value="10" className="text-black">Optimism</option>
+                  <option value="8453" className="text-black">Base</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="baseNftAddress" className="block text-white font-medium mb-2">
+                  NFT Contract Address
                 </label>
                 <input
                   type="text"
-                  id="searchQuery"
-                  name="searchQuery"
-                  value={formData.searchQuery}
+                  id="baseNftAddress"
+                  name="baseNftAddress"
+                  value={formData.baseNftAddress}
                   onChange={handleChange}
                   className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-                  placeholder="Search for NFTs..."
+                  placeholder="Enter NFT contract address..."
                 />
-                {/* TODO: Add search results display */}
-                <div className="mt-4 space-y-2">
-                  {/* Placeholder for search results */}
-                  <div className="p-4 bg-white/5 rounded-lg text-white/70">
-                    No NFTs found. Try searching for a collection name or NFT ID.
-                  </div>
-                </div>
               </div>
-            ) : (
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="baseNftAddress" className="block text-white font-medium mb-2">
-                    NFT Contract Address
-                  </label>
-                  <input
-                    type="text"
-                    id="baseNftAddress"
-                    name="baseNftAddress"
-                    value={formData.baseNftAddress}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-                    placeholder="Enter NFT contract address"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="baseNftId" className="block text-white font-medium mb-2">
-                    Token ID
-                  </label>
-                  <input
-                    type="text"
-                    id="baseNftId"
-                    name="baseNftId"
-                    value={formData.baseNftId}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-                    placeholder="Enter token ID"
-                  />
-                </div>
+
+              <div>
+                <label htmlFor="tokenId" className="block text-white font-medium mb-2">
+                  Token ID
+                </label>
+                <input
+                  type="text"
+                  id="tokenId"
+                  name="tokenId"
+                  value={formData.tokenId}
+                  onChange={handleChange}
+                  className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                  placeholder="Enter token ID..."
+                />
               </div>
-            )}
 
-            {/* Common form fields */}
-            <div>
-              <label htmlFor="name" className="block text-white font-medium mb-2">
-                New NFT Name
-              </label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                value={formData.name}
-                onChange={handleChange}
-                className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-                placeholder="Enter NFT name"
-                required
-              />
-            </div>
+              <div className="pt-4">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setLoading(true);
+                    setError(null);
+                    setNftData(null);
 
-            <div>
-              <label htmlFor="description" className="block text-white font-medium mb-2">
-                Description
-              </label>
-              <textarea
-                id="description"
-                name="description"
-                value={formData.description}
-                onChange={handleChange}
-                className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30 h-32"
-                placeholder="Enter NFT description"
-                required
-              />
-            </div>
+                    try {
+                      if (!formData.chainId || !formData.baseNftAddress || !formData.tokenId) {
+                        throw new Error('Please fill in all fields');
+                      }
 
-            <div>
-              <label htmlFor="prompt" className="block text-white font-medium mb-2">
-                AI Prompt
-              </label>
-              <textarea
-                id="prompt"
-                name="prompt"
-                value={formData.prompt}
-                onChange={handleChange}
-                className="w-full px-4 py-2 bg-white/20 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30 h-32"
-                placeholder="Describe how you want to transform the NFT into 8-bit pixel style..."
-                required
-              />
+                      // Get the appropriate client based on selected chain
+                      const client = chainClients[formData.chainId as keyof typeof chainClients];
+                      if (!client) {
+                        throw new Error('Selected chain is not supported');
+                      }
+
+                      // Read tokenURI from the contract
+                      const tokenUri = await client.readContract({
+                        address: formData.baseNftAddress as `0x${string}`,
+                        abi: [{
+                          name: 'tokenURI',
+                          type: 'function',
+                          stateMutability: 'view',
+                          inputs: [{ name: 'tokenId', type: 'uint256' }],
+                          outputs: [{ name: '', type: 'string' }],
+                        }],
+                        functionName: 'tokenURI',
+                        args: [BigInt(formData.tokenId)],
+                      });
+
+                      if (!tokenUri) {
+                        throw new Error('NFT not found');
+                      }
+
+                      // Convert IPFS URL if needed
+                      const resolvedTokenUri = convertIpfsUrl(tokenUri);
+
+                      // Fetch metadata from tokenURI
+                      const metadata = await ky.get(resolvedTokenUri).json();
+                      
+                      // Convert IPFS image URL if present
+                      if (metadata.image) {
+                        metadata.image = convertIpfsUrl(metadata.image);
+                      }
+                      
+                      setNftData(metadata);
+                    } catch (error: any) {
+                      console.error('Error fetching NFT:', error);
+                      setError(error.message || 'Failed to fetch NFT data');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  className="w-full px-6 py-2 bg-white text-purple-600 rounded-lg font-semibold hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
+                >
+                  Get NFT Traits
+                </button>
+              </div>
+
+              {loading && (
+                <div className="mt-4 p-4 bg-white/10 rounded-lg">
+                  <p className="text-white text-center">Loading NFT data...</p>
+                </div>
+              )}
+
+              {error && (
+                <div className="mt-4 p-4 bg-white/10 rounded-lg">
+                  <p className="text-white text-center">{error}</p>
+                </div>
+              )}
+
+              {nftData && (
+                <div className="mt-4 p-4 bg-white/10 rounded-lg text-white">
+                  <h3 className="font-semibold text-lg mb-2">{nftData.name}</h3>
+                  {nftData.description && (
+                    <p className="text-white/70 mb-4">{nftData.description}</p>
+                  )}
+                  {nftData.image && (
+                    <img 
+                      src={nftData.image} 
+                      alt={nftData.name} 
+                      className="w-full h-48 object-cover rounded-lg mb-4"
+                    />
+                  )}
+                  {nftData.attributes && nftData.attributes.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Traits:</h4>
+                      <div className="grid grid-cols-2 gap-2">
+                        {nftData.attributes.map((attr: any, index: number) => (
+                          <div key={index} className="bg-white/10 p-2 rounded">
+                            <div className="font-medium">{attr.trait_type}</div>
+                            <div className="text-white/70">{attr.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <button
               type="submit"
-              className="w-full px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold text-lg hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
+              className="w-full mt-6 px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold text-lg hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
             >
-              Create NFT
+              Create and mint NFT
             </button>
           </form>
         </div>

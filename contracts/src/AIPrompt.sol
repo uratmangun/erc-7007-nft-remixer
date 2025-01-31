@@ -48,9 +48,9 @@ contract Prompt is AIOracleCallbackReceiver {
     /// @notice Initialize the contract, binding it to a specified AIOracle.
     constructor(IAIOracle _aiOracle) AIOracleCallbackReceiver(_aiOracle) {
         owner = msg.sender;
-        callbackGasLimit[50] = 500_000; // Stable Diffusion v2
-        callbackGasLimit[503] = 500_000; // Stable Diffusion v2
-        callbackGasLimit[11] = 5_000_000; // Llama
+          callbackGasLimit[503] = 500_000; // Stable Diffusion v3
+          
+       
     }
 
     /// @notice sets the callback gas limit for a model

@@ -1,7 +1,8 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { optimismSepolia } from 'wagmi/chains';
+import { Chain } from '@rainbow-me/rainbowkit';
 
-const chains = [optimismSepolia];
+const chains: [Chain, ...Chain[]] = [optimismSepolia];
 
 export const config = getDefaultConfig({
   appName: 'NFT AI Remixer',

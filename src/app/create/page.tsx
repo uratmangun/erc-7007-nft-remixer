@@ -316,12 +316,7 @@ export default function CreateNFT() {
               </>
             )}
 
-            <button
-              type="submit"
-              className="w-full mt-6 px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold text-lg hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
-            >
-              Create and mint NFT
-            </button>
+         
           </form>
         </div>
       </div>

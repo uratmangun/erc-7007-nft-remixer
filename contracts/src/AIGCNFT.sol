@@ -56,12 +56,8 @@ contract AIGCNFT is IERC7007, ERC721 {
     }
 
     function tokenURI(uint256 tokenId) override public view returns (string memory) {
-        bytes memory prompt = tokenIdToPrompt[tokenId];
-        string memory json = Base64.encode(bytes(string(abi.encodePacked(
-            '{"name":"token#', toString(tokenId), '", "attributes": [{"trait_type": "author", "value": "0x', toAsciiString(aigc[prompt].author), '"}, {"trait_type": "model", "value": "Stable Diffusion v3"}], "description": "FortuneTeller utilises ORAs AI Oracle to mint AIGC NFTs about each players fortune.", "image": "ipfs://', string(aigc[prompt].imageCID), '"}'))));
-        string memory output = string(abi.encodePacked('data:application/json;base64,', json));
-
-        return output;
+       
+        return string(abi.encodePacked("https://erc7007.uratmangun.ovh/api/metadata/", toString(tokenId)));
     }
 
     function supportsInterface(

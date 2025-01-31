@@ -8,7 +8,12 @@ import { createPublicClient, http } from 'viem';
 import { mainnet, polygon, arbitrum, optimism, base } from 'viem/chains';
 import ky from 'ky';
 
-type TabType = 'search' | 'contract';
+interface NFTMetadata {
+  name?: string;
+  description?: string;
+  image?: string;
+  attributes?: any[];
+}
 
 export default function CreateNFT() {
  
@@ -52,9 +57,11 @@ export default function CreateNFT() {
   });
 
   const [nftMetadata, setNftMetadata] = useState<any>(null);
-  const [nftData, setNftData] = useState<any>(null);
+  const [nftData, setNftData] = useState<NFTMetadata | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [generatedPrompt, setGeneratedPrompt] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,14 +196,11 @@ export default function CreateNFT() {
                         throw new Error('NFT not found');
                       }
 
-                      // Convert IPFS URL if needed
-                      const resolvedTokenUri = convertIpfsUrl(tokenUri);
-
                       // Fetch metadata from tokenURI
-                      const metadata = await ky.get(resolvedTokenUri).json();
+                      const metadata: NFTMetadata = await ky.get(`/api/metadata?uri=${encodeURIComponent(tokenUri)}`).json();
                       
                       // Convert IPFS image URL if present
-                      if (metadata.image) {
+                      if (metadata.image && metadata.image.startsWith('ipfs://')) {
                         metadata.image = convertIpfsUrl(metadata.image);
                       }
                       
@@ -255,6 +259,62 @@ export default function CreateNFT() {
                 </div>
               )}
             </div>
+
+            {nftData && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setIsLoading(true);
+                    const response = await ky.post('/api/gaianet', {
+                      json: {
+                        model: "qwen72b",
+                        messages: [{ role: "user", content: `make an image prompt based on this data: \`\`\`${JSON.stringify(nftData)}\`\`\` make it one liner no need to explain anything` }]
+                      },
+                      timeout: 60000
+                    }).json<{ choices: { message: { content: string } }[] }>();
+                    setGeneratedPrompt(response.choices[0].message.content);
+                  } catch (error) {
+                    console.error('Error generating prompt:', error);
+                    setError('Failed to generate prompt');
+                  } finally {
+                    setIsLoading(false);
+                  }
+                }}
+                className="w-full mt-6 px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold text-lg hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
+                disabled={isLoading}
+              >
+                {isLoading ? 'Generating...' : 'Create image prompt'}
+              </button>
+            )}
+
+            {generatedPrompt && (
+              <div className="mt-6 p-4 bg-white/10 rounded-lg text-white">
+                <h3 className="font-semibold text-lg mb-2">Generated Image Prompt</h3>
+                <p className="text-white/80 italic">
+                  {generatedPrompt}
+                </p>
+              </div>
+            )}
+
+            {generatedPrompt && (
+              <>
+                <button
+                  type="button"
+                  className="w-full mt-6 px-6 py-3 bg-green-500 text-white rounded-lg font-semibold text-lg hover:bg-green-600 transition-all transform hover:scale-105 shadow-lg"
+                >
+                  Create Image and Mint
+                </button>
+
+                <div className="mt-6 p-4 bg-white/10 rounded-lg">
+                  <img
+                    src={`https://picsum.photos/400/300?random=${Math.random()}`}
+                    alt="Generated AI Image"
+                    className="w-full h-auto rounded-lg shadow-lg"
+                  />
+                </div>
+              </>
+            )}
 
             <button
               type="submit"

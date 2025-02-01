@@ -42,8 +42,8 @@ contract AIGCNFT is IERC7007, ERC721 {
         bytes calldata aigcData,
         bytes calldata proof) public virtual returns (uint256 tokenId) {
         // Decode AIGCData to verify the author
-        (bytes memory image, address author, uint256 requestId) = abi.decode(aigcData, (bytes, address, uint256));
-        require(author == msg.sender, "Only author can mint");
+        
+        require(verify(prompt, aigcData, proof), "Invalid proof");
         
         tokenId = totalSupply;
         _safeMint(msg.sender, tokenId);
@@ -53,7 +53,7 @@ contract AIGCNFT is IERC7007, ERC721 {
 
     function tokenURI(uint256 tokenId) override public view returns (string memory) {
        
-        return string(abi.encodePacked("https://erc7007.uratmangun.ovh/api/metadata/", toString(tokenId)));
+        return string(abi.encodePacked("https://erc7007.uratmangun.ovh/api/nft-metadata/", toString(tokenId)));
     }
 
     function supportsInterface(

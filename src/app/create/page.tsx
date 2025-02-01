@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
-import { useAccount } from 'wagmi';
+import { useState, useEffect } from 'react';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useChainId } from 'wagmi';
 import { createPublicClient, http } from 'viem';
 import { mainnet, polygon, arbitrum, optimism, base } from 'viem/chains';
 import ky from 'ky';
+import addresses from '../../../contract-abi/addresses.json';
 
 interface NFTMetadata {
   name?: string;
@@ -17,7 +18,7 @@ interface NFTMetadata {
 
 export default function CreateNFT() {
  
-  const { isConnected } = useAccount();
+  const { isConnected, address } = useAccount();
   const chainId = useChainId();
 
   // Map of chain clients
@@ -62,6 +63,33 @@ export default function CreateNFT() {
   const [error, setError] = useState<string | null>(null);
   const [generatedPrompt, setGeneratedPrompt] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [mintData, setMintData] = useState<{
+    prompt: `0x${string}`;
+    aigcData: `0x${string}`;
+    proof: `0x${string}`;
+  } | null>(null);
+  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+
+  // Setup contract write hook
+  const { writeContract, data: hash, isPending, isError, error: writeError } = useWriteContract();
+
+  // Wait for transaction receipt
+  const { 
+    isLoading: isConfirming, 
+    isSuccess: isConfirmed,
+    data: receipt
+  } = useWaitForTransactionReceipt({
+    hash
+  });
+
+  useEffect(() => {
+    if (isConfirmed && receipt) {
+      setSuccess(`NFT minted successfully! Transaction: ${receipt.transactionHash}`);
+      setLoading(false);
+      setMintData(null);
+    }
+  }, [isConfirmed, receipt]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,19 +206,48 @@ export default function CreateNFT() {
                         throw new Error('Selected chain is not supported');
                       }
 
-                      // Read tokenURI from the contract
-                      const tokenUri = await client.readContract({
-                        address: formData.baseNftAddress as `0x${string}`,
-                        abi: [{
-                          name: 'tokenURI',
-                          type: 'function',
-                          stateMutability: 'view',
-                          inputs: [{ name: 'tokenId', type: 'uint256' }],
-                          outputs: [{ name: '', type: 'string' }],
-                        }],
-                        functionName: 'tokenURI',
-                        args: [BigInt(formData.tokenId)],
-                      });
+                      let tokenUri: string | null = null;
+
+                      // Try ERC-721 tokenURI first
+                      try {
+                        tokenUri = await client.readContract({
+                          address: formData.baseNftAddress as `0x${string}`,
+                          abi: [{
+                            name: 'tokenURI',
+                            type: 'function',
+                            stateMutability: 'view',
+                            inputs: [{ name: 'tokenId', type: 'uint256' }],
+                            outputs: [{ name: '', type: 'string' }],
+                          }],
+                          functionName: 'tokenURI',
+                          args: [BigInt(formData.tokenId)],
+                        });
+                      } catch (err) {
+                        console.log('Not an ERC-721 token, trying ERC-1155...');
+                        // Try ERC-1155 uri
+                        try {
+                          tokenUri = await client.readContract({
+                            address: formData.baseNftAddress as `0x${string}`,
+                            abi: [{
+                              name: 'uri',
+                              type: 'function',
+                              stateMutability: 'view',
+                              inputs: [{ name: '_id', type: 'uint256' }],
+                              outputs: [{ name: '', type: 'string' }],
+                            }],
+                            functionName: 'uri',
+                            args: [BigInt(formData.tokenId)],
+                          });
+                          
+                          // ERC-1155 uri might contain {id} placeholder that needs to be replaced
+                          if (tokenUri) {
+                            const hexTokenId = BigInt(formData.tokenId).toString(16).padStart(64, '0');
+                            tokenUri = tokenUri.replace('{id}', hexTokenId);
+                          }
+                        } catch (err2) {
+                          throw new Error('NFT contract does not implement ERC-721 or ERC-1155 standard');
+                        }
+                      }
 
                       if (!tokenUri) {
                         throw new Error('NFT not found');
@@ -214,7 +271,7 @@ export default function CreateNFT() {
                   }}
                   className="w-full px-6 py-2 bg-white text-purple-600 rounded-lg font-semibold hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
                 >
-                  Get NFT Traits
+                  Get NFT
                 </button>
               </div>
 
@@ -266,14 +323,18 @@ export default function CreateNFT() {
                 onClick={async () => {
                   try {
                     setIsLoading(true);
-                    const response = await ky.post('/api/gaianet', {
+                    const response = await ky.post('/api/generate-text', {
                       json: {
-                        model: "qwen72b",
-                        messages: [{ role: "user", content: `make an image prompt based on this data: \`\`\`${JSON.stringify(nftData)}\`\`\` make it one liner no need to explain anything` }]
+                        messages: [{ role: "user", content: `make an image prompt based on this data: \`\`\`${JSON.stringify(nftData)}\`\`\` make it one liner no need to explain anything` }],
+                        temperature: 0.7,
+                        max_tokens: 1000
                       },
                       timeout: 60000
-                    }).json<{ choices: { message: { content: string } }[] }>();
-                    setGeneratedPrompt(response.choices[0].message.content);
+                    }).json<{ choices: [{ message: { content: string } }] }>();
+                    
+                    // Clean up response by removing <think> tag and its contents
+                    const content = response.choices[0].message.content.replace(/<think>.*?<\/think>\s*/s, '').trim();
+                    setGeneratedPrompt(content);
                   } catch (error) {
                     console.error('Error generating prompt:', error);
                     setError('Failed to generate prompt');
@@ -296,27 +357,139 @@ export default function CreateNFT() {
                 </p>
               </div>
             )}
+            {generatedPrompt && (
+              <>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      setError(null);
+                      const response = await fetch('/api/generate-image', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: generatedPrompt })
+                      });
+                      if (!response.ok) throw new Error('Failed to generate image');
+                      const data = await response.json();
+                      setGeneratedImage(data.image);
+                    } catch (error) {
+                      console.error('Error generating image:', error);
+                      setError('Failed to generate image');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  className="w-full mt-6 px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold text-lg hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
+                  disabled={loading}
+                >
+                  {loading ? 'Generating...' : 'Generate Image'}
+                </button>
+                {generatedImage && (
+                  <div className="mt-6 p-4 bg-white/10 rounded-lg">
+                    <img src={generatedImage} alt="Generated" className="w-full h-auto rounded-lg" />
+                  </div>
+                )}
+              </>
+            )}
 
             {generatedPrompt && (
               <>
                 <button
                   type="button"
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      setError(null);
+
+                      if (!generatedPrompt) {
+                        throw new Error('Please generate a prompt first');
+                      }
+
+                      if (!isConnected || !address) {
+                        throw new Error('Please connect your wallet');
+                      }
+
+                      // 1. Generate image using the API
+                      const imageResponse = await fetch('/api/generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: generatedPrompt })
+                      });
+
+                      if (!imageResponse.ok) {
+                        throw new Error('Failed to generate image');
+                      }
+
+                      const imageData = await imageResponse.json();
+                      const base64Image = imageData.image;
+
+                      // 2. Generate random requestId
+                      const requestId = crypto.randomUUID();
+
+                      // 3. Generate proof
+                      const proofResponse = await fetch('/api/generate-proof', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          prompt: generatedPrompt,
+                          image: base64Image,
+                          author: address,
+                          requestId
+                        })
+                      });
+
+                      if (!proofResponse.ok) {
+                        throw new Error('Failed to generate proof');
+                      }
+
+                      const proofData = await proofResponse.json();
+                      
+                      // Call mint function
+                      await writeContract({
+                        address: addresses.aigcnft as `0x${string}`,
+                        abi: [{
+                          name: 'mint',
+                          type: 'function',
+                          stateMutability: 'nonpayable',
+                          inputs: [
+                            { name: 'prompt', type: 'bytes' },
+                            { name: 'aigcData', type: 'bytes' },
+                            { name: 'proof', type: 'bytes' }
+                          ],
+                          outputs: [{ name: 'tokenId', type: 'uint256' }],
+                        }],
+                        functionName: 'mint',
+                        args: [
+                          proofData.prompt as `0x${string}`,
+                          proofData.aigcData as `0x${string}`,
+                          proofData.proof as `0x${string}`
+                        ]
+                      });
+
+                    } catch (error: any) {
+                      console.error('Minting error:', error);
+                      setError(error.message || 'Failed to mint NFT');
+                      setLoading(false);
+                    }
+                  }}
                   className="w-full mt-6 px-6 py-3 bg-green-500 text-white rounded-lg font-semibold text-lg hover:bg-green-600 transition-all transform hover:scale-105 shadow-lg"
+                  disabled={loading || !generatedPrompt || !isConnected || isPending || isConfirming}
                 >
-                  Create Image and Mint
+                  {isPending ? 'Confirm in Wallet...' : 
+                   isConfirming ? 'Minting...' : 
+                   'Create Image and Mint'}
                 </button>
 
-                <div className="mt-6 p-4 bg-white/10 rounded-lg">
-                  <img
-                    src={`https://picsum.photos/400/300?random=${Math.random()}`}
-                    alt="Generated AI Image"
-                    className="w-full h-auto rounded-lg shadow-lg"
-                  />
-                </div>
+                {success && (
+                  <div className="mt-6 p-4 bg-white/10 rounded-lg text-white">
+                    <p className="text-white/80 italic">
+                      {success}
+                    </p>
+                  </div>
+                )}
               </>
             )}
-
-         
           </form>
         </div>
       </div>

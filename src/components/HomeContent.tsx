@@ -12,7 +12,7 @@ export default function HomeContent() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [mounted, setMounted] = useState(false);
-  const { isConnected, chainId, account } = useAccount();
+  const { isConnected, chainId } = useAccount();
   const { switchChain } = useSwitchChain();
   const { disconnect } = useDisconnect();
 
@@ -115,7 +115,7 @@ export default function HomeContent() {
         NFT AI remixer
       </h1>
       <p className="text-lg md:text-xl text-white/90 text-center max-w-2xl font-normal mb-8">
-        Create an entirely new NFT with 8-bit pixel style based on a trait of a certain NFT using ORA AI erc 7007 compatible onchain AI
+        Create an entirely new NFT based on a trait of a certain NFT using erc 7007 compatible onchain AI with zk proof for validity
       </p>
       
       {mounted && isConnected && (

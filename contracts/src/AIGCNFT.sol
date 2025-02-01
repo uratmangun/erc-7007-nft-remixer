@@ -37,10 +37,9 @@ contract AIGCNFT is IERC7007, ERC721 {
         verifier = IVerifier(verifier_);
     }
 
-    function mint(address to,
+    function mint(
         bytes calldata prompt,
         bytes calldata aigcData,
-        string calldata uri,
         bytes calldata proof) public virtual returns (uint256 tokenId) {
         // Decode AIGCData to verify the author
         (bytes memory image, address author, uint256 requestId) = abi.decode(aigcData, (bytes, address, uint256));

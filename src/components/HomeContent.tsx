@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { mockNfts } from '@/data/mockNfts';
 import NftCard from '@/components/NftCard';
-import { useAccount, useSwitchChain } from 'wagmi';
+import { useAccount, useSwitchChain, useDisconnect } from 'wagmi';
 import { CHAIN_ID } from '@/config/web3';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useRouter } from 'next/navigation';
@@ -12,8 +12,9 @@ export default function HomeContent() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [mounted, setMounted] = useState(false);
-  const { isConnected, chainId } = useAccount();
+  const { isConnected, chainId, account } = useAccount();
   const { switchChain } = useSwitchChain();
+  const { disconnect } = useDisconnect();
 
   useEffect(() => {
     setMounted(true);
@@ -34,7 +35,79 @@ export default function HomeContent() {
     <div className="min-h-screen bg-gradient-to-br from-purple-500 via-pink-500 to-orange-500 flex flex-col items-center pt-20 px-4">
       <div className="absolute top-4 right-4">
         {mounted && (
-          <ConnectButton />
+          <ConnectButton.Custom>
+            {({
+              account,
+              chain,
+              openChainModal,
+              openConnectModal,
+              openAccountModal,
+              mounted: mountedButton,
+            }) => {
+              return (
+                <div
+                  {...(!mountedButton && {
+                    'aria-hidden': true,
+                    'style': {
+                      opacity: 0,
+                      pointerEvents: 'none',
+                      userSelect: 'none',
+                    },
+                  })}
+                >
+                  {(() => {
+                    if (!mounted) return null;
+                    if (!account) {
+                      return (
+                        <button onClick={openConnectModal} type="button" className="px-4 py-2 rounded-lg bg-white text-purple-600 font-medium">
+                          Connect Wallet
+                        </button>
+                      );
+                    }
+                    if (chain) {
+                      return (
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={openChainModal}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 text-white font-medium hover:bg-white/20"
+                          >
+                            {chain.hasIcon && (
+                              <img
+                                alt={chain.name ?? 'Chain icon'}
+                                src={chain.iconUrl}
+                                style={{ width: 24, height: 24 }}
+                              />
+                            )}
+                            {chain.name}
+                          </button>
+                          <button
+                            onClick={openAccountModal}
+                            type="button"
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-purple-600 font-medium"
+                          >
+                            {account.displayName}
+                            {account.displayBalance && (
+                              <span className="text-purple-600/70">
+                                {account.displayBalance}
+                              </span>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => disconnect()}
+                            type="button"
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-purple-600 font-medium"
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              );
+            }}
+          </ConnectButton.Custom>
         )}
       </div>
 

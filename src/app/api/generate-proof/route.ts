@@ -1,58 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { encodeAbiParameters, parseAbiParameters, stringToHex } from 'viem';
-import { poseidon } from 'circomlibjs';
-import { groth16 } from 'snarkjs';
-import path from 'path';
 
-// Function to generate zero-knowledge proof
+// Function to generate zero-knowledge proof using Rust webserver
 async function generateCircuitProof(inputs: {
     prompt: string,
-    image: string,
-    author: string,
-    requestId: string
+    aigc_data: {
+        image: string,
+        author: string,
+        request_id: string
+    }
 }) {
     try {
-        // Get the circuit files paths
-        const circuitWasmPath = path.join(process.cwd(), 'circuits', 'panda.wasm');
-        const zkeyPath = path.join(process.cwd(), 'circuits', 'panda.zkey');
+        // Send request to Rust webserver
+        const response = await fetch('http://127.0.0.1:8084/proof', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                prompt: stringToHex(inputs.prompt),
+                aigc_data: {
+                    image: stringToHex(inputs.aigc_data.image),
+                    author: stringToHex(inputs.aigc_data.author),
+                    request_id: stringToHex(inputs.aigc_data.request_id)
+                }
+            })
+        });
 
-        // Calculate input hashes using Poseidon
-        const promptHash = poseidon([BigInt(stringToHex(inputs.prompt))]);
-        const imageHash = poseidon([BigInt(inputs.image)]);
-        const authorHash = poseidon([BigInt(inputs.author)]);
-        const requestIdHash = poseidon([BigInt(inputs.requestId)]);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-        // Prepare inputs for the circuit
-        const circuitInputs = {
-            prompt: promptHash.toString(),
-            image: imageHash.toString(),
-            author: authorHash.toString(),
-            requestId: requestIdHash.toString()
-        };
-
-        // Generate the proof
-        const { proof, publicSignals } = await groth16.fullProve(
-            circuitInputs,
-            circuitWasmPath,
-            zkeyPath
-        );
-
-        // Convert proof to the format expected by the smart contract
-        const solidityProof = {
-            pi_a: proof.pi_a,
-            pi_b: proof.pi_b,
-            pi_c: proof.pi_c,
-            publicSignals
-        };
+        const proofData = await response.json();
 
         return {
-            proof: solidityProof,
-            publicSignals,
+            proof: proofData.proof,
+            publicSignals: proofData.public_inputs,
             hashedInputs: {
-                promptHash: promptHash.toString(),
-                imageHash: imageHash.toString(),
-                authorHash: authorHash.toString(),
-                requestIdHash: requestIdHash.toString()
+                prompt: stringToHex(inputs.prompt),
+                image: stringToHex(inputs.aigc_data.image),
+                author: stringToHex(inputs.aigc_data.author),
+                requestId: stringToHex(inputs.aigc_data.request_id)
+            },
+            data:{
+                prompt: inputs.prompt,
+                image: inputs.aigc_data.image,
+                author: inputs.aigc_data.author,
+                requestId: inputs.aigc_data.request_id
             }
         };
     } catch (error) {
@@ -64,41 +58,31 @@ async function generateCircuitProof(inputs: {
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        const { prompt, image, author, requestId } = body;
+        const { prompt, aigc_data } = body;
 
-        if (!prompt || !image || !author || !requestId) {
+        if (!prompt || !aigc_data || !aigc_data.image || !aigc_data.author || !aigc_data.request_id) {
             return NextResponse.json(
                 { error: 'Missing required fields' },
                 { status: 400 }
             );
         }
 
-        // Generate the zero-knowledge proof
+        // Generate the zero-knowledge proof using Rust webserver
         const proofData = await generateCircuitProof({
             prompt,
-            image,
-            author,
-            requestId
+            aigc_data
         });
 
-        // Encode AIGCData struct for contract interaction using viem
-        const aigcData = encodeAbiParameters(
-            parseAbiParameters('(bytes,address,uint256)'),
-            [[image, author, requestId]]
-        );
-
-        // Create the final response with all necessary data
         return NextResponse.json({
-            prompt: stringToHex(prompt),
-            aigcData,
             proof: proofData.proof,
             publicSignals: proofData.publicSignals,
-            hashedInputs: proofData.hashedInputs
+            aigcData: proofData.hashedInputs,
+            data: proofData.data
         });
-    } catch (error: any) {
-        console.error('Error generating proof:', error);
+    } catch (error) {
+        console.error('Error in generate-proof API:', error);
         return NextResponse.json(
-            { error: 'Failed to generate proof', details: error.message },
+            { error: 'Failed to generate proof' },
             { status: 500 }
         );
     }

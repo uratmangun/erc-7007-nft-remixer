@@ -3,10 +3,14 @@ pragma solidity ^0.8.13;
 import {IERC7007} from "../interfaces/IERC7007.sol";
 import {ERC721, IERC721, IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {PoseidonUnit5L} from "./libraries/PoseidonUnit5L.sol";
+
 interface IVerifier {
     function verifyProof(
-        bytes calldata proof,
-        uint256[] calldata publicInputs
+        uint[2] calldata _pA,
+        uint[2][2] calldata _pB,
+        uint[2] calldata _pC,
+        uint[1] calldata _pubSignals
     ) external view returns (bool);
 }
 
@@ -23,15 +27,15 @@ contract AIGCNFT is IERC7007, ERC721 {
     struct AIGCData {
        
         bytes image;
-        address author;
-        uint256 requestId;
+        bytes author;
+        bytes requestId;
        
     }
     uint256 public totalSupply;
 
     IVerifier public verifier;
 
- 
+    uint256 constant SNARK_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     constructor(address verifier_) ERC721("On-chain AI Oracle", "OAO") {
         verifier = IVerifier(verifier_);
@@ -80,45 +84,55 @@ contract AIGCNFT is IERC7007, ERC721 {
         bytes calldata proof
     ) public virtual override {
         require(ownerOf(tokenId) != address(0), "ERC7007: nonexistent token");
-        require(verify(prompt, aigcData, proof), "ERC7007: invalid proof");
-        emit AigcData(tokenId, prompt, aigcData, proof);
+         emit AigcData(tokenId, prompt, aigcData, proof);
     }
 
     /**
      * @dev Verify the `prompt`, `aigcData` and `proof`.
      */
     function verify(
-        bytes calldata prompt,
+        bytes calldata publicInput,
         bytes calldata aigcData,
         bytes calldata proof
     ) public view returns (bool success) {
-        // Hash the inputs (must match the circuit's public input)
-        uint256 publicHash = hashInputs(prompt, aigcData);
-
-        // Verify the proof
-        uint256[] memory publicInputs = new uint256[](1);
-        publicInputs[0] = publicHash;
-
-        return verifier.verifyProof(proof, publicInputs);
+        // Decode proof bytes
+        (
+            uint256[2] memory _pA,
+            uint256[2][2] memory _pB,
+            uint256[2] memory _pC
+        ) = abi.decode(proof, (uint256[2], uint256[2][2], uint256[2]));
+        
+        uint256[1] memory _pubSignals = [uint256(bytes32(publicInput))];
+        return verifier.verifyProof(_pA, _pB, _pC, _pubSignals);
     }
 
     function hashInputs(bytes calldata prompt, bytes calldata aigcData)
-        internal
+        public
         pure
         returns (uint256)
     {
         // Decode AIGCData
-        (bytes memory image, address author, uint256 requestId) = abi.decode(
+        (bytes memory image, bytes memory author, bytes memory requestId) = abi.decode(
             aigcData,
-            (bytes, address, uint256)
+            (bytes, bytes, bytes)
         );
 
-        // Hash the inputs (must match the circuit's logic)
-        return uint256(
-            keccak256(abi.encodePacked(prompt, image, author, requestId))
-        );
+        // Convert variable-length bytes to uint256 (field element conversion)
+        uint256 promptHash = uint256(keccak256(prompt)) % SNARK_FIELD_MODULUS;
+        uint256 imageHash = uint256(keccak256(image)) % SNARK_FIELD_MODULUS;
+        uint256 authorHash = uint256(keccak256(author)) % SNARK_FIELD_MODULUS;
+        uint256 requestIdHash = uint256(keccak256(requestId)) % SNARK_FIELD_MODULUS;
+
+        // Poseidon hash with 4 inputs matching circuit's public input computation
+        uint256 publicHash = poseidon4([promptHash, imageHash, authorHash, requestIdHash]);
+        
+        return publicHash;
     }
- 
+
+    function poseidon4(uint256[4] memory inputs) internal pure returns (uint256) {
+        return PoseidonUnit5L.poseidon(inputs);
+    }
+
     function toString(uint256 value) internal pure returns (string memory) {
         // Inspired by OraclizeAPI's implementation - MIT license
         // https://github.com/oraclize/ethereum-api/blob/b42146b063c7d6ee1358846c198246239e9360e8/oraclizeAPI_0.4.25.sol

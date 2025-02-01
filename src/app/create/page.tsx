@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useChainId } from 'wagmi';
@@ -8,12 +8,33 @@ import { createPublicClient, http } from 'viem';
 import { mainnet, polygon, arbitrum, optimism, base } from 'viem/chains';
 import ky from 'ky';
 import addresses from '../../../contract-abi/addresses.json';
+import AIGCNFT_ABI from '../../../contract-abi/AIGCNFT.json';
+import { encodeAbiParameters, parseAbiParameters } from 'viem';
 
 interface NFTMetadata {
   name?: string;
   description?: string;
   image?: string;
   attributes?: any[];
+}
+
+interface AigcData {
+  prompt: `0x${string}`;
+  image: `0x${string}`;
+  author: `0x${string}`;
+  requestId: `0x${string}`;
+}
+
+interface ProofData {
+  proof: `0x${string}`;
+  publicSignals: string[];
+  aigcData: AigcData;
+  data: {
+    prompt: string;
+    image: string;
+    author: string;
+    request_id: string;
+  };
 }
 
 export default function CreateNFT() {
@@ -70,6 +91,7 @@ export default function CreateNFT() {
     proof: `0x${string}`;
   } | null>(null);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [proofData, setProofData] = useState<ProofData | null>(null);
 
   // Setup contract write hook
   const { writeContract, data: hash, isPending, isError, error: writeError } = useWriteContract();
@@ -110,6 +132,8 @@ export default function CreateNFT() {
     }
     return url;
   };
+
+
 
   if (!isConnected) {
     return (
@@ -392,103 +416,199 @@ export default function CreateNFT() {
                 )}
               </>
             )}
+            {generatedImage && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    setError(null);
 
-            {generatedPrompt && (
-              <>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      setLoading(true);
-                      setError(null);
-
-                      if (!generatedPrompt) {
-                        throw new Error('Please generate a prompt first');
-                      }
-
-                      if (!isConnected || !address) {
-                        throw new Error('Please connect your wallet');
-                      }
-
-                      // 1. Generate image using the API
-                      const imageResponse = await fetch('/api/generate', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: generatedPrompt })
-                      });
-
-                      if (!imageResponse.ok) {
-                        throw new Error('Failed to generate image');
-                      }
-
-                      const imageData = await imageResponse.json();
-                      const base64Image = imageData.image;
-
-                      // 2. Generate random requestId
-                      const requestId = crypto.randomUUID();
-
-                      // 3. Generate proof
-                      const proofResponse = await fetch('/api/generate-proof', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          prompt: generatedPrompt,
-                          image: base64Image,
-                          author: address,
-                          requestId
-                        })
-                      });
-
-                      if (!proofResponse.ok) {
-                        throw new Error('Failed to generate proof');
-                      }
-
-                      const proofData = await proofResponse.json();
-                      
-                      // Call mint function
-                      await writeContract({
-                        address: addresses.aigcnft as `0x${string}`,
-                        abi: [{
-                          name: 'mint',
-                          type: 'function',
-                          stateMutability: 'nonpayable',
-                          inputs: [
-                            { name: 'prompt', type: 'bytes' },
-                            { name: 'aigcData', type: 'bytes' },
-                            { name: 'proof', type: 'bytes' }
-                          ],
-                          outputs: [{ name: 'tokenId', type: 'uint256' }],
-                        }],
-                        functionName: 'mint',
-                        args: [
-                          proofData.prompt as `0x${string}`,
-                          proofData.aigcData as `0x${string}`,
-                          proofData.proof as `0x${string}`
-                        ]
-                      });
-
-                    } catch (error: any) {
-                      console.error('Minting error:', error);
-                      setError(error.message || 'Failed to mint NFT');
-                      setLoading(false);
+                    if (!generatedPrompt || !generatedImage || !address) {
+                      throw new Error('Missing required data. Please generate an image and connect your wallet first.');
                     }
-                  }}
-                  className="w-full mt-6 px-6 py-3 bg-green-500 text-white rounded-lg font-semibold text-lg hover:bg-green-600 transition-all transform hover:scale-105 shadow-lg"
-                  disabled={loading || !generatedPrompt || !isConnected || isPending || isConfirming}
-                >
-                  {isPending ? 'Confirm in Wallet...' : 
-                   isConfirming ? 'Minting...' : 
-                   'Create Image and Mint'}
-                </button>
 
-                {success && (
-                  <div className="mt-6 p-4 bg-white/10 rounded-lg text-white">
-                    <p className="text-white/80 italic">
-                      {success}
-                    </p>
-                  </div>
-                )}
-              </>
+                    const response = await fetch('/api/generate-proof', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({
+                        prompt: generatedPrompt.padEnd(64, '0'),
+                        aigc_data: {
+                          image: generatedImage.padEnd(64, '0'),
+                          author: address.toLowerCase().padEnd(64, '0'),
+                          request_id: BigInt(Date.now()).toString(16).padStart(64, '0')
+                        }
+                      }),
+                    });
+
+                    if (!response.ok) {
+                      throw new Error('Failed to generate proof');
+                    }
+
+                    const proofData = await response.json();
+                    console.log('Proof generated successfully:', proofData);
+                    setProofData(proofData);
+                  } catch (err) {
+                    console.error('Error generating proof:', err);
+                    setError(err instanceof Error ? err.message : 'Failed to generate proof');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="w-full mt-6 px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold text-lg hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
+                disabled={loading}
+              >
+                {loading ? 'Generating Proof...' : 'Create Proof'}
+              </button>
+            )}
+            {proofData && (
+              <div className="mt-6 p-4 bg-white rounded-lg shadow-md">
+                <h3 className="text-lg font-semibold mb-2 text-gray-800">Generated Proof:</h3>
+                <pre className="whitespace-pre-wrap break-all bg-gray-100 p-3 rounded-lg text-xs text-gray-700 border border-gray-200">
+                  {proofData.proof}
+                </pre>
+              </div>
+            )}
+           
+            {proofData && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    setError(null);
+                    const client = chainClients[chainId.toString() as keyof typeof chainClients];
+                    if (!proofData?.aigcData || !proofData?.proof || !generatedPrompt || !client) {
+                      throw new Error('Missing required data for verification');
+                    }
+
+                    // Parse the proof data
+                    const proofDataProof = JSON.parse(proofData.proof);
+                    
+                    // Helper function to convert to hex
+                    const toHex = (str: string) => {
+                      const hex = BigInt(str).toString(16);
+                      return `0x${hex.padStart(64, '0')}`;
+                    };
+
+                    // Convert proof points to hex strings
+                    const pA = proofDataProof.pi_a.map(toHex);
+                    const pB = proofDataProof.pi_b.map(row => row.map(toHex));
+                    const pC = proofDataProof.pi_c.map(toHex);
+
+                    // Encode the proof data directly
+                    const proofBytes = encodeAbiParameters(
+                      parseAbiParameters('uint256[2], uint256[2][2], uint256[2]'),
+                      [
+                        [pA[0], pA[1]],
+                        [
+                          [pB[0][1], pB[0][0]], // Note: B inputs are reversed
+                          [pB[1][1], pB[1][0]]  // Note: B inputs are reversed
+                        ],
+                        [pC[0], pC[1]]
+                      ]
+                    );
+
+                    // Format the public input as hex
+                    const publicSignal = proofData?.publicSignals[0];
+                    const formattedPublicInput = toHex(publicSignal);
+                    
+                    // Format aigcData properly
+                    const aigcDataBytes = '0x';
+
+                    console.log('Verification inputs:', {
+                      publicInput: formattedPublicInput,
+                      aigcData: aigcDataBytes,
+                      proof: proofBytes,
+                      rawProof: {
+                        pA,
+                        pB,
+                        pC,
+                        publicSignal
+                      }
+                    });
+
+                    // Call contract verify function
+                    const isVerified = await client.readContract({
+                      address: addresses.aigcnft,
+                      abi: AIGCNFT_ABI.abi,
+                      functionName: 'verify',
+                      args: [formattedPublicInput, aigcDataBytes, proofBytes]
+                    });
+
+                    if (isVerified) {
+                      console.log('Proof verified successfully');
+                    } else {
+                      throw new Error('Proof verification failed');
+                    }
+                  } catch (err) {
+                    console.error('Error verifying proof:', err);
+                    setError(err instanceof Error ? err.message : 'Failed to verify proof');
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="w-full mt-6 px-6 py-3 bg-white text-purple-600 rounded-lg font-semibold text-lg hover:bg-opacity-90 transition-all transform hover:scale-105 shadow-lg"
+                disabled={loading}
+              >
+                {loading ? 'Verifying...' : 'Verify Proof'}
+              </button>
+            )}
+             {proofData && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    setLoading(true);
+                    setError(null);
+
+                    if (!isConnected || !address) {
+                      throw new Error('Please connect your wallet');
+                    }
+
+                    await writeContract({
+                      address: addresses.aigcnft as `0x${string}`,
+                      abi: [{
+                        name: 'mint',
+                        type: 'function',
+                        stateMutability: 'nonpayable',
+                        inputs: [
+                          { name: 'prompt', type: 'bytes' },
+                          { name: 'aigcData', type: 'bytes' },
+                          { name: 'proof', type: 'bytes' }
+                        ],
+                        outputs: [{ name: 'tokenId', type: 'uint256' }],
+                      }],
+                      functionName: 'mint',
+                      args: [
+                        proofData.prompt as `0x${string}`,
+                        proofData.aigcData as `0x${string}`,
+                        proofData.proof as `0x${string}`
+                      ]
+                    });
+
+                  } catch (error: any) {
+                    console.error('Minting error:', error);
+                    setError(error.message || 'Failed to mint NFT');
+                    setLoading(false);
+                  }
+                }}
+                className="w-full mt-6 px-6 py-3 bg-green-500 text-white rounded-lg font-semibold text-lg hover:bg-green-600 transition-all transform hover:scale-105 shadow-lg"
+                disabled={loading || !isConnected || isPending || isConfirming}
+              >
+                {isPending ? 'Confirm in Wallet...' : 
+                 isConfirming ? 'Minting...' : 
+                 'Mint NFT'}
+              </button>
+            )}
+            {success && (
+              <div className="mt-6 p-4 bg-white/10 rounded-lg text-white">
+                <p className="text-white/80 italic">
+                  {success}
+                </p>
+              </div>
             )}
           </form>
         </div>
